@@ -28,12 +28,16 @@ variable "desired_capacity" {
   description = "Set the desired capacity of the auto-scaling group. This value is also used as the -bootstrap-expect option when starting the consul server."
 }
 
+data "aws_region" "current" {
+    current = true
+}
+
 data "template_file" "install" {
   template = "${file("${path.module}/scripts/install.sh")}"
 
   vars {
     CLUSTER_NAME     = "${var.cluster_name}"
-    DATACENTER       = "${var.region}"
+    DATACENTER       = "${data.aws_region.current.name}"
     BOOTSTRAP_EXPECT = "${var.desired_capacity}"
   }
 }
