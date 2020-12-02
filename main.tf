@@ -29,13 +29,12 @@ variable "desired_capacity" {
 }
 
 data "aws_region" "current" {
-    current = true
 }
 
 data "template_file" "install" {
   template = "${file("${path.module}/scripts/install.sh")}"
 
-  vars {
+  vars = {
     CLUSTER_NAME     = "${var.cluster_name}"
     DATACENTER       = "${data.aws_region.current.name}"
     BOOTSTRAP_EXPECT = "${var.desired_capacity}"
@@ -122,14 +121,6 @@ resource "aws_security_group" "consul" {
     self      = true
   }
 
-  # TODO: Remove
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port        = 0
     to_port          = 0
@@ -139,30 +130,44 @@ resource "aws_security_group" "consul" {
   }
 }
 
-resource "aws_launch_configuration" "consul" {
+resource "aws_launch_template" "consul" {
   name_prefix   = "consul-lc-"
   image_id      = "${data.aws_ami.centos.id}"
   instance_type = "${var.instance_type}"
   key_name      = "${var.key_name}"
 
-  iam_instance_profile = "${aws_iam_instance_profile.consul.arn}"
-  associate_public_ip_address = true
-  security_groups      = ["${aws_security_group.consul.id}"]
-  user_data            = "${data.template_file.install.rendered}"
+  iam_instance_profile {
+    name = "${aws_iam_instance_profile.consul.name}"
+  }
+ 
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups = ["${aws_security_group.consul.id}"]
+  }
+  user_data            = "${base64encode(data.template_file.install.rendered)}"
 
-  root_block_device {
-    volume_type = "gp2"
-    volume_size = 40
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_size = 40
+      volume_type = "gp2"
+    }
   }
 
   lifecycle {
     create_before_destroy = true
   }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
 }
 
 resource "aws_autoscaling_group" "consul" {
-  name                 = "${var.cluster_name} - ${aws_launch_configuration.consul.name}"
-  launch_configuration = "${aws_launch_configuration.consul.name}"
+  name                 = "${var.cluster_name} - ${aws_launch_template.consul.name}"
   vpc_zone_identifier  = "${var.subnet_ids}"
 
   min_size         = "${var.min_size}"
@@ -170,6 +175,11 @@ resource "aws_autoscaling_group" "consul" {
   desired_capacity = "${var.desired_capacity}"
 
   health_check_type = "EC2"
+
+  launch_template {
+    id = "${aws_launch_template.consul.id}"
+    version = "$Latest"
+  }
 
   tag {
     key                 = "Name"
